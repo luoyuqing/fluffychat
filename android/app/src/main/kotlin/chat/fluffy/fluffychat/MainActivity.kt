@@ -19,7 +19,9 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        // do nothing, because the engine was been configured in provideEngine
+        // 注册后台同步桥（引擎在 provideEngine 里就已经配置过一次，
+        // 这里再注册保证 Activity 自己的引擎也带着 channel）
+        BackgroundSyncBridge.register(flutterEngine, applicationContext)
     }
 
     // Prevent Flutter engine gets destroyed on back button close.
@@ -32,6 +34,8 @@ class MainActivity : FlutterFragmentActivity() {
         var engine: FlutterEngine? = null
         fun provideEngine(context: Context): FlutterEngine {
             val eng = engine ?: FlutterEngine(context, emptyArray(), true, false)
+            // 后台同步前台服务也用这个引擎，桥必须挂上
+            BackgroundSyncBridge.register(eng, context.applicationContext)
             engine = eng
             return eng
         }

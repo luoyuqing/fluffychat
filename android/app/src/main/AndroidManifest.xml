@@ -20,6 +20,10 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SHORT_SERVICE" />
+    <!-- 清聊：不依赖 FCM / ntfy 的后台消息同步 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- To make app compatible with tablets -->
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
@@ -28,7 +32,7 @@
     <uses-sdk
             tools:overrideLibrary="io.wazo.callkeep, net.touchcapture.qr.flutterqr, com.cloudwebrtc.webrtc, org.webrtc, com.it_nomads.fluttersecurestorage, com.pichillilorenzo.flutter_inappwebview, com.example.video_compress, com.otaliastudios.transcoder, com.otaliastudios.opengl, com.kineapps.flutter_file_dialog, com.llfbandit.record, com.pravera.flutter_foreground_task"/>
     <application
-        android:label="FluffyChat"
+        android:label="清聊"
         android:icon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true"
         android:allowBackup="false"
@@ -144,6 +148,32 @@
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc"/>
+
+        <!-- 常驻前台服务：让 Dart 的 /sync 长轮询在后台活下去 -->
+        <service
+            android:name=".BackgroundSyncService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".WatchdogReceiver"
+            android:enabled="true"
+            android:exported="false" />
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

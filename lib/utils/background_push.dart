@@ -264,32 +264,9 @@ class BackgroundPush {
   static bool _wentToRoomOnStartup = false;
 
   Future<void> setupPush(BuildContext context) async {
-    if (PlatformInfos.isAndroid &&
-        (await UnifiedPush.getDistributors()).isNotEmpty &&
-        context.mounted) {
-      await UnifiedPushUi(
-        context: context,
-        instances: ['default'],
-        unifiedPushFunctions: UPFunctions(),
-        showNoDistribDialog: false,
-        onNoDistribDialogDismissed: () {}, // TODO: Implement me
-      ).registerAppWithDialog();
-    } else {
-      for (final client in clients) {
-        Logs().d('SetupPush for Client ${client.clientName}');
-        if (client.onLoginStateChanged.value != LoginState.loggedIn ||
-            !PlatformInfos.isMobile ||
-            matrix == null) {
-          return;
-        }
-        // Do not setup unifiedpush if this has been initialized by
-        // an unifiedpush action
-        if (upAction) {
-          return;
-        }
-        await setupFirebase(client);
-      }
-    }
+    // 清聊：改用纯客户端方案（/sync 长轮询 + 本地通知），
+    // 不再向服务器注册 FCM / UnifiedPush / ntfy 之类 pusher。
+    Logs().i('[Push] Local sync mode: skipping server pusher registration');
     openRoomFromNotification();
   }
 

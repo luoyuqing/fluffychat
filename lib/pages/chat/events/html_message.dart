@@ -648,32 +648,85 @@ class _CollapsibleText extends StatefulWidget {
 
 class _CollapsibleTextState extends State<_CollapsibleText> {
   bool _expanded = false;
+  final GlobalKey _anchorKey = GlobalKey();
+
+  /// 展开/收起时把这条消息在视口里的位置锁住：
+  /// 先记下它在滚动视图里的偏移，布局完成后再把滚动位置补偿回去，
+  /// 这样列表不会滑走、也不会跳到最底部。
+  void _toggle() {
+    final box = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    final position = _anchorKey.currentContext == null
+        ? null
+        : Scrollable.maybeOf(_anchorKey.currentContext!)?.position;
+    final before = (box == null) ? null : _offsetToReveal(box);
+
+    setState(() => _expanded = !_expanded);
+
+    if (before == null || position == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final newBox = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
+      if (newBox == null || !position.hasPixels) return;
+      final after = _offsetToReveal(newBox);
+      if (after == null) return;
+      final target = (position.pixels + (after - before)).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if ((target - position.pixels).abs() > 0.5) {
+        position.jumpTo(target);
+      }
+    });
+  }
+
+  double? _offsetToReveal(RenderBox box) {
+    try {
+      final viewport = RenderAbstractViewport.of(box);
+      return viewport.getOffsetToReveal(box, 0.0).offset;
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final l10n = L10n.of(context);
     return Column(
+      key: _anchorKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        AnimatedSize(
-          duration: FluffyThemes.animationDuration,
-          curve: FluffyThemes.animationCurve,
-          alignment: AlignmentDirectional.topStart,
-          child: Text.rich(
-            widget.span,
-            style: widget.style,
-            maxLines: _expanded ? null : widget.maxLines,
-            overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
-            selectionColor: widget.textColor.withAlpha(128),
-          ),
+        Text.rich(
+          widget.span,
+          style: widget.style,
+          maxLines: _expanded ? null : widget.maxLines,
+          overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+          selectionColor: widget.textColor.withAlpha(128),
         ),
-        Center(
-          child: TextButton.icon(
-            onPressed: () => setState(() => _expanded = !_expanded),
-            style: TextButton.styleFrom(foregroundColor: widget.linkColor),
-            icon: Icon(_expanded ? Icons.arrow_drop_up : Icons.arrow_drop_down),
-            label: Text(_expanded ? l10n.showLess : l10n.showMore),
+        // 原位展开：点一下就地展开/收起，不选中消息、不滚动列表
+        InkWell(
+          onTap: _toggle,
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _expanded ? Icons.unfold_less : Icons.unfold_more,
+                  size: 14,
+                  color: widget.linkColor,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _expanded ? l10n.showLess : l10n.showMore,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: widget.linkColor,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ],

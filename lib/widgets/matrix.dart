@@ -10,6 +10,7 @@ import 'package:collection/collection.dart';
 import 'package:fluffychat/l10n/l10n.dart';
 import 'package:fluffychat/utils/client_manager.dart';
 import 'package:fluffychat/utils/init_with_restore.dart';
+import 'package:fluffychat/utils/local_sync_service.dart';
 import 'package:fluffychat/utils/matrix_sdk_extensions/matrix_file_extension.dart';
 import 'package:fluffychat/utils/notification_background_handler.dart';
 import 'package:fluffychat/utils/platform_infos.dart';
@@ -262,6 +263,10 @@ class MatrixState extends State<Matrix> {
           _cancelSubs(c.clientName);
           widget.clients.remove(c);
           ClientManager.removeClientNameFromStore(c.clientName, store);
+          if (!widget.clients.any((client) => client.isLogged())) {
+            // 没有已登录账号了，停掉常驻同步服务
+            unawaited(LocalSyncService.stop());
+          }
           InitWithRestoreExtension.deleteSessionBackup(name);
 
           if (loggedInWithMultipleClients) {
@@ -284,16 +289,15 @@ class MatrixState extends State<Matrix> {
         });
     onUiaRequest[name] ??= c.onUiaRequest.stream.listen(uiaRequestHandler);
     final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-    if (PlatformInfos.isWeb || PlatformInfos.isDesktop) {
-      c.onSync.stream.first.then((s) {
-        if (kIsWeb) {
-          WebFlutterLocalNotificationsPlugin().requestNotificationsPermission();
-        }
-        onNotification[name] ??= c.onNotification.stream.listen(
-          showLocalNotification,
-        );
-      });
-    }
+    // 清聊：不依赖服务器推送，所有平台都从 /sync 的 onNotification 出本地通知
+    c.onSync.stream.first.then((s) {
+      if (kIsWeb) {
+        WebFlutterLocalNotificationsPlugin().requestNotificationsPermission();
+      }
+      onNotification[name] ??= c.onNotification.stream.listen(
+        showLocalNotification,
+      );
+    });
     onReceipts[name] ??= c.onSync.stream.listen(
       (syncUpdate) => cancelNotificationsOnSync(
         syncUpdate,
@@ -372,6 +376,11 @@ class MatrixState extends State<Matrix> {
     for (final c in widget.clients) {
       _registerSubs(c.clientName);
     }
+
+    // 清聊：拉起原生后台同步前台服务（dataSync），保证 /sync 在后台继续跑
+    if (PlatformInfos.isAndroid) {
+      unawaited(LocalSyncService.ensureRunning(widget.clients));
+    }
   }
 
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -386,9 +395,9 @@ class MatrixState extends State<Matrix> {
           ? null
           : PresenceType.unavailable;
       if (PlatformInfos.isMobile) {
-        client.backgroundSync = foreground;
+        // 清聊：后台继续 /sync 长轮询，靠前台服务保活，本地出通知。
+        client.backgroundSync = true;
         client.requestHistoryOnLimitedTimeline = !foreground;
-        Logs().v('Set background sync to', foreground);
       }
     }
   }

@@ -90,7 +90,8 @@ class FluffyChatApp extends StatelessWidget {
         title: AppSettings.applicationName.value,
         themeMode: themeMode,
         debugShowCheckedModeBanner: false,
-        locale: locale,
+        // 清聊：只提供简体中文
+        locale: const Locale('zh'),
         theme: FluffyThemes.buildTheme(context, Brightness.light, primaryColor),
         darkTheme: FluffyThemes.buildTheme(
           context,
