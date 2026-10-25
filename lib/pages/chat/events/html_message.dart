@@ -3,6 +3,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import 'dart:async';
+
 import 'package:collection/collection.dart';
 import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:fluffychat/config/setting_keys.dart';
@@ -665,60 +667,90 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
   /// （反转 ListView 天然把气泡底部钉住、内容向上长，所以必须主动补偿。）
   final GlobalKey _anchorKey = GlobalKey();
 
+  /// AnimatedSize 的 child（文本本体）：布局尺寸恒为展开后的最终高度，
+  /// 动画第一帧就能读到总增量，用于做同步的反向滚动补偿。
+  final GlobalKey _textKey = GlobalKey();
+
   /// 点击瞬间文本顶部的屏幕 y 坐标（全局坐标系）。
   /// 不依赖滚动坐标的具体语义（reverse 列表的 getOffsetToReveal 方向语义
   /// 与普通列表相反，用它算补偿完全无效）。
   double? _anchorScreenY;
+  double? _initialHeight;
+  int _holdEpoch = 0;
 
   void _toggle() {
     final context = _anchorKey.currentContext;
     final box = context?.findRenderObject() as RenderBox?;
     if (box != null && box.hasSize) {
       _anchorScreenY = box.localToGlobal(Offset.zero).dy;
+      _initialHeight = box.size.height;
     }
+    _holdEpoch++;
+    final epoch = _holdEpoch;
     setState(() => _expanded = !_expanded);
-    _holdAnchor();
+    _holdAnchor(epoch);
   }
 
-  /// 把文本顶部的屏幕位置修回点击时的位置。
-  ///
-  /// 聊天列表是 ListView(reverse: true)，axisDirection 为 up：
-  /// pixels 增大时内容在屏幕上向「下」移动，与普通列表相反，
-  /// 所以补偿方向要用 axisDirection 判断，不能想当然。
-  ///
-  /// AnimatedSize 渐变期间每帧布局都会把顶部往上推，逐帧修正直到动画结束。
-  void _holdAnchor() {
-    var iterations = 0;
-    void step(Duration _) {
-      iterations++;
+  /// 平滑锚定：不用逐帧 jumpTo 硬校正（每帧先偏再 snap 会抖），
+  /// 而是在动画第一帧读到最终高度增量后，用与 AnimatedSize 相同的
+  /// 时长/曲线做一次反向 animateTo，两条动画逐帧对消，顶部全程稳定。
+  void _holdAnchor(int epoch) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (epoch != _holdEpoch) return;
       final context = _anchorKey.currentContext;
-      final box = context?.findRenderObject() as RenderBox?;
-      final scrollable = context == null ? null : Scrollable.maybeOf(context);
-      final target = _anchorScreenY;
-      if (box != null && scrollable != null && target != null) {
-        final position = scrollable.position;
-        if (box.hasSize && position.hasPixels && position.hasContentDimensions) {
-          final current = box.localToGlobal(Offset.zero).dy;
-          final screenDelta = current - target;
-          if (screenDelta.abs() > 0.5) {
-            final sign =
-                position.axisDirection == AxisDirection.up ? -1.0 : 1.0;
-            position.jumpTo(
-              (position.pixels + sign * screenDelta).clamp(
-                position.minScrollExtent,
-                position.maxScrollExtent,
-              ),
-            );
-          }
-        }
-      }
-      // 覆盖 AnimatedSize 的动画时长（250ms ≈ 15 帧），留足余量。
-      if (iterations < 40) {
-        WidgetsBinding.instance.addPostFrameCallback(step);
-      }
-    }
+      final textContext = _textKey.currentContext;
+      final anchor = _anchorScreenY;
+      final initialHeight = _initialHeight;
+      if (context == null || textContext == null) return;
+      if (anchor == null || initialHeight == null) return;
+      final scrollable = Scrollable.maybeOf(context);
+      if (scrollable == null) return;
+      final position = scrollable.position;
+      if (!position.hasPixels || !position.hasContentDimensions) return;
+      final finalHeight = textContext.size?.height ?? initialHeight;
+      final totalDelta = finalHeight - initialHeight;
+      if (totalDelta.abs() < 0.5) return;
+      // reverse 列表（axisDirection=up）：内容被顶向上，视口要反向多滚；
+      // 普通列表方向相反。公式对展开/收起都成立（totalDelta 带符号）。
+      final scrollSign =
+          position.axisDirection == AxisDirection.up ? 1.0 : -1.0;
+      final target = (position.pixels + scrollSign * totalDelta).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      unawaited(
+        position.animateTo(
+          target,
+          duration: FluffyThemes.animationDuration,
+          curve: FluffyThemes.animationCurve,
+        ),
+      );
+      // 动画结束后校验一次，如有残留误差再一次性修正。
+      Future.delayed(
+        FluffyThemes.animationDuration + const Duration(milliseconds: 80),
+        () => _finalCorrect(epoch, anchor),
+      );
+    });
+  }
 
-    WidgetsBinding.instance.addPostFrameCallback(step);
+  void _finalCorrect(int epoch, double anchor) {
+    if (epoch != _holdEpoch) return;
+    final context = _anchorKey.currentContext;
+    if (context == null) return;
+    final box = context.findRenderObject() as RenderBox?;
+    final scrollable = Scrollable.maybeOf(context);
+    if (box == null || !box.hasSize || scrollable == null) return;
+    final position = scrollable.position;
+    if (!position.hasPixels || !position.hasContentDimensions) return;
+    final screenDelta = box.localToGlobal(Offset.zero).dy - anchor;
+    if (screenDelta.abs() <= 0.5) return;
+    final sign = position.axisDirection == AxisDirection.up ? -1.0 : 1.0;
+    position.jumpTo(
+      (position.pixels + sign * screenDelta).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ),
+    );
   }
 
   @override
@@ -735,6 +767,7 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
           curve: FluffyThemes.animationCurve,
           alignment: AlignmentDirectional.topStart,
           child: Text.rich(
+            key: _textKey,
             widget.span,
             style: widget.style,
             maxLines: _expanded ? null : widget.maxLines,

@@ -108,6 +108,15 @@ extension LocalNotificationsExtension on MatrixState {
       title: title,
       body: body,
       notificationDetails: NotificationDetails(
+        // Qchat：统一走 qchat_messages 渠道（与 headless 通知一致），
+        // 高优先级，保证新消息能横幅提醒。
+        android: const AndroidNotificationDetails(
+          'qchat_messages',
+          '新消息',
+          channelDescription: '聊天新消息通知',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
         linux: LinuxNotificationDetails(
           sound: ThemeLinuxSound('message-new-instant'),
           actions: switch (event.type) {

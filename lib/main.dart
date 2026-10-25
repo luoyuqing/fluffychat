@@ -13,7 +13,6 @@ import 'package:fluffychat/utils/client_manager.dart';
 import 'package:fluffychat/utils/error_reporter.dart';
 import 'package:fluffychat/utils/notification_background_handler.dart';
 import 'package:fluffychat/utils/platform_infos.dart';
-import 'package:fluffychat/utils/start_push_foreground_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_vodozemac/flutter_vodozemac.dart' as vod;
@@ -25,6 +24,7 @@ import 'package:universal_html/universal_html.dart' as web;
 
 import 'config/setting_keys.dart';
 import 'utils/background_push.dart';
+import 'utils/headless_notifications.dart';
 import 'widgets/fluffy_chat_app.dart';
 
 ReceivePort? mainIsolateReceivePort;
@@ -83,19 +83,22 @@ void main(List<String> args) => runZonedGuarded(() async {
   // currently only supported on Android.
   if (PlatformInfos.isAndroid &&
       AppLifecycleState.detached == WidgetsBinding.instance.lifecycleState) {
-    await ForegroundServices.startService('background_push');
-
     final clients = await ClientManager.getClients(store: store);
 
-    // Do not send online presences when app is in background fetch mode.
+    // Qchat：纯客户端方案没有服务器推送器（FCM/UnifiedPush 都不用），
+    // /sync 长轮询本身就是推送。detached 引擎（开机自启 / 进程被杀后由
+    // 前台服务拉起）必须保持持续同步，不能像上游 FCM 方案那样停掉
+    // sync 干等推送 —— 否则服务活着但永远收不到消息。
     for (final client in clients) {
-      client.backgroundSync = false;
+      client.backgroundSync = true;
       client.syncPresence = PresenceType.offline;
     }
 
-    // In the background fetch mode we do not want to waste ressources with
-    // starting the Flutter engine but process incoming push notifications.
+    // BackgroundPush 构造函数里会初始化本地通知插件；
+    // 无 GUI 引擎没有 MatrixState，通知订阅由 headless 模块独立完成。
     BackgroundPush.clientOnly(clients);
+    startHeadlessNotificationSync(clients);
+
     // To start the flutter engine afterwards we add an custom observer.
     WidgetsBinding.instance.addObserver(AppStarter(clients, store));
     Logs().i(
@@ -173,6 +176,8 @@ class AppStarter with WidgetsBindingObserver {
       client.backgroundSync = true;
       client.syncPresence = PresenceType.online;
     }
+    // GUI 起来后 MatrixState 接管通知（带前台抑制），headless 订阅撤掉防重复。
+    cancelHeadlessNotificationSync();
     startGui(clients, store);
     // We must make sure that the GUI is only started once.
     guiStarted = true;

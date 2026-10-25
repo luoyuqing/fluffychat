@@ -109,10 +109,15 @@ class BackgroundSyncService : Service() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             ?: return
+        // 渠道重要性创建后不可改：旧渠道是 IMPORTANCE_LOW（普通常驻通知），
+        // 换新 ID 用 IMPORTANCE_MIN 重建，并把旧渠道删掉。
+        // MIN：状态栏不显示图标、不折叠进通知列表，只沉在通知栏底部
+        // 「正在运行」分组里，把存在感降到系统允许的最低。
+        manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
         val channel = NotificationChannel(
             CHANNEL_ID,
             getString(R.string.background_sync_channel),
-            NotificationManager.IMPORTANCE_LOW,
+            NotificationManager.IMPORTANCE_MIN,
         ).apply {
             description = getString(R.string.background_sync_channel_desc)
             setShowBadge(false)
@@ -158,14 +163,14 @@ class BackgroundSyncService : Service() {
             .setSilent(true)
             .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .build()
     }
 
     companion object {
         private const val TAG = "QingliaoBgSync"
-        const val CHANNEL_ID = "qingliao_background_sync"
+        const val CHANNEL_ID = "qingliao_background_sync_v2"
+        const val LEGACY_CHANNEL_ID = "qingliao_background_sync"
         const val NOTIFICATION_ID = 0x514C414F
         const val ACTION_START = "chat.qingliao.START_BACKGROUND_SYNC"
         const val ACTION_STOP = "chat.qingliao.STOP_BACKGROUND_SYNC"

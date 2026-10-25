@@ -304,6 +304,8 @@ class ChatInputRow extends StatelessWidget {
                             top: 3.0,
                           ),
                           counter: const SizedBox.shrink(),
+                          hintText: '点此发消息...',
+                          hintMaxLines: 1,
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
                           filled: false,
