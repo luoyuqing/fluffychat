@@ -15,7 +15,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Read Flutter version
-        run: echo "FLUTTER_VERSION=$(python3 -c \"import json;print(json.load(open('.fvmrc'))['flutter'])\")" >> $GITHUB_ENV
+        run: |
+          FLUTTER_VERSION=$(sed -n 's/.*"flutter"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' .fvmrc)
+          echo "FLUTTER_VERSION=$FLUTTER_VERSION" >> $GITHUB_ENV
 
       - uses: actions/setup-java@v4
         with:
