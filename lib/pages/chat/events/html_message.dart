@@ -745,6 +745,13 @@ class _CollapsibleTextState extends State<_CollapsibleText>
     final position = scrollable.position;
     if (!position.hasPixels || !position.hasContentDimensions) return;
     final t = _t.value;
+    if (!_expanded) {
+      // 收起不补偿：按钮钉在气泡底边（结构上的不动点），气泡向上收缩时
+      // 按钮及其下方内容在屏幕上纹丝不动 —— 屏幕固定在「显示较少」处。
+      // 若此时套用展开的补偿公式，反而会把整个视口推偏一段（按钮上移）。
+      _prevT = t;
+      return;
+    }
     final delta = fullH * (1 - frac) * (t - _prevT);
     _prevT = t;
     if (delta.abs() < 0.01) return;
