@@ -654,32 +654,48 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
   /// 这样读者眼睛停在同一个折行处，不会一下滑到气泡末尾。
   final GlobalKey _anchorKey = GlobalKey();
 
-  /// 展开前按钮在滚动视图里的偏移，动画期间逐帧补偿回去。
-  double? _anchorOffset;
+  /// 点击瞬间按钮的屏幕 y 坐标（全局坐标系）。
+  /// 展开会导致列表重新布局，我们只关心按钮在屏幕上偏了多少，
+  /// 不依赖滚动坐标的具体语义（reverse 列表的 getOffsetToReveal 方向语义
+  /// 与普通列表相反，之前用它在真机上完全无效）。
+  double? _anchorScreenY;
 
   void _toggle() {
     final context = _anchorKey.currentContext;
     final box = context?.findRenderObject() as RenderBox?;
-    if (box != null) _anchorOffset = _offsetToReveal(box);
+    if (box != null && box.hasSize) {
+      _anchorScreenY = box.localToGlobal(Offset.zero).dy;
+    }
     setState(() => _expanded = !_expanded);
     _holdAnchor();
   }
 
-  /// AnimatedSize 是渐进变高的，所以在动画期间每帧把锚点修正回原位。
+  /// 把按钮的屏幕位置修回点击时的位置。
+  ///
+  /// 聊天列表是 ListView(reverse: true)，axisDirection 为 up：
+  /// pixels 增大时内容在屏幕上向「下」移动，与普通列表相反，
+  /// 所以补偿方向要用 axisDirection 判断，不能想当然。
+  ///
+  /// 展开是瞬时的（AnimatedSize duration 为 0），理论上补一帧就够；
+  /// 这里多跑几帧兜底，防止系统在同一帧之后又做了滚动校正。
   void _holdAnchor() {
-    final started = DateTime.now();
+    var iterations = 0;
     void step(Duration _) {
+      iterations++;
       final context = _anchorKey.currentContext;
       final box = context?.findRenderObject() as RenderBox?;
-      final position = context == null ? null : Scrollable.maybeOf(context)?.position;
-      final anchor = _anchorOffset;
-      if (box != null && position != null && anchor != null && position.hasPixels) {
-        final current = _offsetToReveal(box);
-        if (current != null) {
-          final delta = current - anchor;
-          if (delta.abs() > 0.3) {
+      final scrollable = context == null ? null : Scrollable.maybeOf(context);
+      final target = _anchorScreenY;
+      if (box != null && scrollable != null && target != null) {
+        final position = scrollable.position;
+        if (box.hasSize && position.hasPixels && position.hasContentDimensions) {
+          final current = box.localToGlobal(Offset.zero).dy;
+          final screenDelta = current - target;
+          if (screenDelta.abs() > 0.5) {
+            final sign =
+                position.axisDirection == AxisDirection.up ? -1.0 : 1.0;
             position.jumpTo(
-              (position.pixels + delta).clamp(
+              (position.pixels + sign * screenDelta).clamp(
                 position.minScrollExtent,
                 position.maxScrollExtent,
               ),
@@ -687,21 +703,12 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
           }
         }
       }
-      if (DateTime.now().difference(started) < const Duration(milliseconds: 450)) {
+      if (iterations < 10) {
         WidgetsBinding.instance.addPostFrameCallback(step);
       }
     }
 
     WidgetsBinding.instance.addPostFrameCallback(step);
-  }
-
-  double? _offsetToReveal(RenderBox box) {
-    try {
-      final viewport = RenderAbstractViewport.of(box);
-      return viewport.getOffsetToReveal(box, 0.0).offset;
-    } catch (_) {
-      return null;
-    }
   }
 
   @override
@@ -711,8 +718,10 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        // duration 设 0：瞬开展开，锚点补偿只需一帧就能到位，
+        // 避免渐变期间逐帧重排和滚动补偿互相打架（最稳方案）。
         AnimatedSize(
-          duration: FluffyThemes.animationDuration,
+          duration: Duration.zero,
           curve: FluffyThemes.animationCurve,
           alignment: AlignmentDirectional.topStart,
           child: Text.rich(
