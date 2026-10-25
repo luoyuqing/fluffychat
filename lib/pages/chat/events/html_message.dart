@@ -649,34 +649,50 @@ class _CollapsibleText extends StatefulWidget {
 
 class _CollapsibleTextState extends State<_CollapsibleText> {
   bool _expanded = false;
+
+  /// 「显示更多」按钮本身作为锚点：展开/收起后让它留在原来的屏幕位置，
+  /// 这样读者眼睛停在同一个折行处，不会一下滑到气泡末尾。
   final GlobalKey _anchorKey = GlobalKey();
 
-  /// 展开/收起时把这条消息在视口里的位置锁住：
-  /// 先记下它在滚动视图里的偏移，布局完成后再把滚动位置补偿回去，
-  /// 这样列表不会滑走、也不会跳到最底部。
+  /// 展开前按钮在滚动视图里的偏移，动画期间逐帧补偿回去。
+  double? _anchorOffset;
+
   void _toggle() {
-    final box = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
-    final position = _anchorKey.currentContext == null
-        ? null
-        : Scrollable.maybeOf(_anchorKey.currentContext!)?.position;
-    final before = (box == null) ? null : _offsetToReveal(box);
-
+    final context = _anchorKey.currentContext;
+    final box = context?.findRenderObject() as RenderBox?;
+    if (box != null) _anchorOffset = _offsetToReveal(box);
     setState(() => _expanded = !_expanded);
+    _holdAnchor();
+  }
 
-    if (before == null || position == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final newBox = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
-      if (newBox == null || !position.hasPixels) return;
-      final after = _offsetToReveal(newBox);
-      if (after == null) return;
-      final target = (position.pixels + (after - before)).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      );
-      if ((target - position.pixels).abs() > 0.5) {
-        position.jumpTo(target);
+  /// AnimatedSize 是渐进变高的，所以在动画期间每帧把锚点修正回原位。
+  void _holdAnchor() {
+    final started = DateTime.now();
+    void step(Duration _) {
+      final context = _anchorKey.currentContext;
+      final box = context?.findRenderObject() as RenderBox?;
+      final position = context == null ? null : Scrollable.maybeOf(context)?.position;
+      final anchor = _anchorOffset;
+      if (box != null && position != null && anchor != null && position.hasPixels) {
+        final current = _offsetToReveal(box);
+        if (current != null) {
+          final delta = current - anchor;
+          if (delta.abs() > 0.3) {
+            position.jumpTo(
+              (position.pixels + delta).clamp(
+                position.minScrollExtent,
+                position.maxScrollExtent,
+              ),
+            );
+          }
+        }
       }
-    });
+      if (DateTime.now().difference(started) < const Duration(milliseconds: 450)) {
+        WidgetsBinding.instance.addPostFrameCallback(step);
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(step);
   }
 
   double? _offsetToReveal(RenderBox box) {
@@ -692,42 +708,28 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
   Widget build(BuildContext context) {
     final l10n = L10n.of(context);
     return Column(
-      key: _anchorKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text.rich(
-          widget.span,
-          style: widget.style,
-          maxLines: _expanded ? null : widget.maxLines,
-          overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
-          selectionColor: widget.textColor.withAlpha(128),
+        AnimatedSize(
+          duration: FluffyThemes.animationDuration,
+          curve: FluffyThemes.animationCurve,
+          alignment: AlignmentDirectional.topStart,
+          child: Text.rich(
+            widget.span,
+            style: widget.style,
+            maxLines: _expanded ? null : widget.maxLines,
+            overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+            selectionColor: widget.textColor.withAlpha(128),
+          ),
         ),
-        // 原位展开：点一下就地展开/收起，不选中消息、不滚动列表
-        InkWell(
-          onTap: _toggle,
-          borderRadius: BorderRadius.circular(4),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _expanded ? Icons.unfold_less : Icons.unfold_more,
-                  size: 14,
-                  color: widget.linkColor,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  _expanded ? l10n.showLess : l10n.showMore,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: widget.linkColor,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
+        Center(
+          child: TextButton.icon(
+            key: _anchorKey,
+            onPressed: _toggle,
+            style: TextButton.styleFrom(foregroundColor: widget.linkColor),
+            icon: Icon(_expanded ? Icons.arrow_drop_up : Icons.arrow_drop_down),
+            label: Text(_expanded ? l10n.showLess : l10n.showMore),
           ),
         ),
       ],
