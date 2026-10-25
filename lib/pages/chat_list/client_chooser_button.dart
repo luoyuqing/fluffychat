@@ -209,6 +209,9 @@ class ClientChooserButton extends StatelessWidget {
         case SettingsAction.setStatus:
           controller.setStatus();
           break;
+        // support 菜单项已移除，枚举值保留只为 switch 穷尽性。
+        case SettingsAction.support:
+          break;
       }
     }
   }
