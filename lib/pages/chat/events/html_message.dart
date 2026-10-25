@@ -17,6 +17,7 @@ import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:highlight/highlight.dart' show highlight;
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as parser;
+import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:matrix/matrix.dart';
 
