@@ -8,7 +8,9 @@ import 'dart:convert';
 import 'package:fluffychat/config/app_config.dart';
 import 'package:fluffychat/l10n/l10n.dart';
 import 'package:fluffychat/pages/settings_notifications/push_rule_extensions.dart';
+import 'package:fluffychat/utils/background_sync_host.dart';
 import 'package:fluffychat/utils/localized_exception_extension.dart';
+import 'package:fluffychat/utils/platform_infos.dart';
 import 'package:fluffychat/widgets/adaptive_dialogs/adaptive_dialog_action.dart';
 import 'package:fluffychat/widgets/adaptive_dialogs/show_modal_action_popup.dart';
 import 'package:fluffychat/widgets/adaptive_dialogs/show_ok_cancel_alert_dialog.dart';
@@ -29,6 +31,31 @@ class SettingsNotifications extends StatefulWidget {
 
 class SettingsNotificationsController extends State<SettingsNotifications> {
   bool isLoading = false;
+
+  /// 是否已加入电池优化白名单（null = 还没查到）
+  bool? ignoringBatteryOptimizations;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshBatteryState();
+  }
+
+  Future<void> _refreshBatteryState() async {
+    if (!PlatformInfos.isAndroid) return;
+    final value = await BackgroundSyncHost.isIgnoringBatteryOptimizations();
+    if (!mounted) return;
+    setState(() => ignoringBatteryOptimizations = value);
+  }
+
+  Future<void> openBatteryOptimization() async {
+    await BackgroundSyncHost.requestIgnoreBatteryOptimizations();
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await _refreshBatteryState();
+  }
+
+  Future<void> openAutostartSettings() =>
+      BackgroundSyncHost.openAutostartSettings();
 
   Future<void> onPusherTap(Pusher pusher) async {
     final delete = await showModalActionPopup<bool>(

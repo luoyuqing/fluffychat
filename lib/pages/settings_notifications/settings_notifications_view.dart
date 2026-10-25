@@ -65,6 +65,48 @@ class SettingsNotificationsView extends StatelessWidget {
             return SelectionArea(
               child: Column(
                 children: [
+                  if (PlatformInfos.isAndroid) ...[
+                    ListTile(
+                      title: Text(
+                        L10n.of(context).backgroundSyncKeepAlive,
+                        style: TextStyle(
+                          color: theme.colorScheme.secondary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      subtitle: Text(
+                        L10n.of(context).backgroundSyncKeepAliveDescription,
+                      ),
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        controller.ignoringBatteryOptimizations == true
+                            ? Icons.battery_charging_full
+                            : Icons.battery_alert_outlined,
+                      ),
+                      title: Text(L10n.of(context).disableBatteryOptimization),
+                      subtitle: Text(
+                        L10n.of(context).disableBatteryOptimizationDescription,
+                      ),
+                      trailing: controller.ignoringBatteryOptimizations == true
+                          ? Icon(
+                              Icons.check_circle,
+                              color: theme.colorScheme.primary,
+                            )
+                          : const Icon(Icons.chevron_right),
+                      onTap: controller.openBatteryOptimization,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.rocket_launch_outlined),
+                      title: Text(L10n.of(context).openAutostartSettings),
+                      subtitle: Text(
+                        L10n.of(context).openAutostartSettingsDescription,
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: controller.openAutostartSettings,
+                    ),
+                    Divider(color: theme.dividerColor),
+                  ],
                   if (kDebugMode && lastReceivedPush != null)
                     ListTile(
                       title: Text('Last received push notification'),
