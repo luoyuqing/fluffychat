@@ -589,7 +589,17 @@ class HtmlMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     final element = parser.parse(html).body ?? dom.Element.html('');
     final configuredMaxLines = AppSettings.messagePreviewMaxLines.value;
-    final maxLines = configuredMaxLines <= 0 ? null : configuredMaxLines;
+    int? maxLines;
+    if (configuredMaxLines > 0) {
+      // 折叠高度目标：约 2/3 屏幕高。按行高（字号 × 1.5）估算行数上限，
+      // 与用户设置的 messagePreviewMaxLines 取较小值。
+      final mq = MediaQuery.of(context);
+      final scaledFontSize = mq.textScaler.scale(fontSize);
+      final lineEstimate = scaledFontSize * 1.5;
+      final byHeight = (mq.size.height * 2 / 3 / lineEstimate).floor();
+      final capped = byHeight < 1 ? 1 : byHeight;
+      maxLines = configuredMaxLines < capped ? configuredMaxLines : capped;
+    }
     final span = _renderHtml(element, context);
     final style = TextStyle(fontSize: fontSize, color: textColor);
 
@@ -650,14 +660,14 @@ class _CollapsibleText extends StatefulWidget {
 class _CollapsibleTextState extends State<_CollapsibleText> {
   bool _expanded = false;
 
-  /// 「显示更多」按钮本身作为锚点：展开/收起后让它留在原来的屏幕位置，
-  /// 这样读者眼睛停在同一个折行处，不会一下滑到气泡末尾。
+  /// 锚点是「消息文本的顶部」：点击显示更多后，顶部固定在原屏幕位置，
+  /// 气泡向下延展，用户顺着往下读即可，不用向上翻回折行处。
+  /// （反转 ListView 天然把气泡底部钉住、内容向上长，所以必须主动补偿。）
   final GlobalKey _anchorKey = GlobalKey();
 
-  /// 点击瞬间按钮的屏幕 y 坐标（全局坐标系）。
-  /// 展开会导致列表重新布局，我们只关心按钮在屏幕上偏了多少，
+  /// 点击瞬间文本顶部的屏幕 y 坐标（全局坐标系）。
   /// 不依赖滚动坐标的具体语义（reverse 列表的 getOffsetToReveal 方向语义
-  /// 与普通列表相反，之前用它在真机上完全无效）。
+  /// 与普通列表相反，用它算补偿完全无效）。
   double? _anchorScreenY;
 
   void _toggle() {
@@ -670,14 +680,13 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
     _holdAnchor();
   }
 
-  /// 把按钮的屏幕位置修回点击时的位置。
+  /// 把文本顶部的屏幕位置修回点击时的位置。
   ///
   /// 聊天列表是 ListView(reverse: true)，axisDirection 为 up：
   /// pixels 增大时内容在屏幕上向「下」移动，与普通列表相反，
   /// 所以补偿方向要用 axisDirection 判断，不能想当然。
   ///
-  /// 展开是瞬时的（AnimatedSize duration 为 0），理论上补一帧就够；
-  /// 这里多跑几帧兜底，防止系统在同一帧之后又做了滚动校正。
+  /// AnimatedSize 渐变期间每帧布局都会把顶部往上推，逐帧修正直到动画结束。
   void _holdAnchor() {
     var iterations = 0;
     void step(Duration _) {
@@ -703,7 +712,8 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
           }
         }
       }
-      if (iterations < 10) {
+      // 覆盖 AnimatedSize 的动画时长（250ms ≈ 15 帧），留足余量。
+      if (iterations < 40) {
         WidgetsBinding.instance.addPostFrameCallback(step);
       }
     }
@@ -718,10 +728,10 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // duration 设 0：瞬开展开，锚点补偿只需一帧就能到位，
-        // 避免渐变期间逐帧重排和滚动补偿互相打架（最稳方案）。
+        // 锚点挂在文本容器上（顶部对齐 topStart：展开时顶部不动、往下长）。
         AnimatedSize(
-          duration: Duration.zero,
+          key: _anchorKey,
+          duration: FluffyThemes.animationDuration,
           curve: FluffyThemes.animationCurve,
           alignment: AlignmentDirectional.topStart,
           child: Text.rich(
@@ -734,7 +744,6 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
         ),
         Center(
           child: TextButton.icon(
-            key: _anchorKey,
             onPressed: _toggle,
             style: TextButton.styleFrom(foregroundColor: widget.linkColor),
             icon: Icon(_expanded ? Icons.arrow_drop_up : Icons.arrow_drop_down),
