@@ -46,6 +46,12 @@ extension LocalNotificationsExtension on MatrixState {
       return;
     }
 
+    // Qchat：应用在前台时只在会话内提示，不弹系统通知
+    if (!kIsWeb &&
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+      return;
+    }
+
     final l10n = L10n.of(context);
     final roomId = event.room.id;
     if (activeRoomId == roomId) {
