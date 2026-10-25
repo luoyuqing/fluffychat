@@ -29,49 +29,35 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      - name: 配置签名证书
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > android/app/release.keystore
+          if [ ! -s android/app/release.keystore ]; then
+            keytool -genkeypair -keystore android/app/release.keystore \
+              -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$KS_PASS" -keypass "$KS_PASS" \
+              -dname "CN=Qchat, O=qingliao"
+          fi
+          cat > android/key.properties <<EOF
+          storeFile=release.keystore
+          storePassword=$KS_PASS
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KS_PASS
+          EOF
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+
       - name: 依赖
         run: flutter pub get
 
-      - name: 构建（按 ABI 分包）
+      - name: 构建（按 ABI 分包，Gradle 直接签名）
         run: flutter build apk --release --split-per-abi
 
-      - name: 准备签名证书
-        run: |
-          if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > release.keystore
-            echo "使用已保存的证书"
-          else
-            keytool -genkeypair -keystore release.keystore \
-              -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "$KS_PASS" -keypass "$KS_PASS" \
-              -dname "CN=Qingliao, O=qingliao"
-            echo "生成新证书"
-          fi
-        env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+      - name: 列出产物
+        run: ls -la build/app/outputs/apk/release/
 
-      - name: 签名
-        run: |
-          curl -sL -o uber-apk-signer.jar \
-            https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar
-          java -jar uber-apk-signer.jar \
-            --apks build/app/outputs/apk/release/*.apk \
-            --ks release.keystore --ksPass "$KS_PASS" \
-            --ksAlias "$KEY_ALIAS" --ksKeyPass "$KS_PASS" \
-            --out build/app/outputs/apk/signed --allowResign
-          ls -la build/app/outputs/apk/signed/
-
-      - name: 上传签名包
+      - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
-          name: qingliao-signed-apks
-          path: build/app/outputs/apk/signed/*-aligned-signed.apk
-
-      - name: 上传证书（仅首次生成时）
-        if: env.KEYSTORE_B64 == ''
-        env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-keystore
-          path: release.keystore
+          name: qchat-signed-apks
+          path: build/app/outputs/apk/release/*.apk
