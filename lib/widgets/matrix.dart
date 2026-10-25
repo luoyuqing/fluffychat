@@ -289,7 +289,7 @@ class MatrixState extends State<Matrix> {
         });
     onUiaRequest[name] ??= c.onUiaRequest.stream.listen(uiaRequestHandler);
     final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-    // 清聊：不依赖服务器推送，所有平台都从 /sync 的 onNotification 出本地通知
+    // Qchat：不依赖服务器推送，所有平台都从 /sync 的 onNotification 出本地通知
     c.onSync.stream.first.then((s) {
       if (kIsWeb) {
         WebFlutterLocalNotificationsPlugin().requestNotificationsPermission();
@@ -377,7 +377,7 @@ class MatrixState extends State<Matrix> {
       _registerSubs(c.clientName);
     }
 
-    // 清聊：拉起原生后台同步前台服务（dataSync），保证 /sync 在后台继续跑
+    // Qchat：拉起原生后台同步前台服务（dataSync），保证 /sync 在后台继续跑
     if (PlatformInfos.isAndroid) {
       unawaited(LocalSyncService.ensureRunning(widget.clients));
     }
@@ -395,7 +395,7 @@ class MatrixState extends State<Matrix> {
           ? null
           : PresenceType.unavailable;
       if (PlatformInfos.isMobile) {
-        // 清聊：后台继续 /sync 长轮询，靠前台服务保活，本地出通知。
+        // Qchat：后台继续 /sync 长轮询，靠前台服务保活，本地出通知。
         client.backgroundSync = true;
         client.requestHistoryOnLimitedTimeline = !foreground;
       }
