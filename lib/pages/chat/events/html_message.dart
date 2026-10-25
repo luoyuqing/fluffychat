@@ -3,8 +3,6 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import 'dart:async';
-
 import 'package:collection/collection.dart';
 import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:fluffychat/config/setting_keys.dart';
@@ -659,121 +657,155 @@ class _CollapsibleText extends StatefulWidget {
   State<_CollapsibleText> createState() => _CollapsibleTextState();
 }
 
-class _CollapsibleTextState extends State<_CollapsibleText> {
+class _CollapsibleTextState extends State<_CollapsibleText>
+    with SingleTickerProviderStateMixin {
   bool _expanded = false;
 
-  /// 锚点是「消息文本的顶部」：点击显示更多后，顶部固定在原屏幕位置，
-  /// 气泡向下延展，用户顺着往下读即可，不用向上翻回折行处。
-  /// （反转 ListView 天然把气泡底部钉住、内容向上长，所以必须主动补偿。）
-  final GlobalKey _anchorKey = GlobalKey();
+  /// 展开动画自己驱动，不用 AnimatedSize：AnimatedSize 的内部动画和
+  /// 滚动补偿是两条独立时间线（它要等布局阶段才发现尺寸变化才起跑），
+  /// 相位对不齐，逐帧误差表现为肉眼可见的抖动。
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: FluffyThemes.animationDuration,
+  );
+  late final Animation<double> _t =
+      CurvedAnimation(parent: _controller, curve: FluffyThemes.animationCurve);
 
-  /// AnimatedSize 的 child（文本本体）：布局尺寸恒为展开后的最终高度，
-  /// 动画第一帧就能读到总增量，用于做同步的反向滚动补偿。
-  final GlobalKey _textKey = GlobalKey();
+  /// 展开后文本本体（恒按完整高度布局，供测量总高度）。
+  final GlobalKey _fullKey = GlobalKey();
 
-  /// 点击瞬间文本顶部的屏幕 y 坐标（全局坐标系）。
-  /// 不依赖滚动坐标的具体语义（reverse 列表的 getOffsetToReveal 方向语义
-  /// 与普通列表相反，用它算补偿完全无效）。
-  double? _anchorScreenY;
-  double? _initialHeight;
-  int _holdEpoch = 0;
+  /// 折叠态显示的截断文本（带省略号），供测量折叠高度。
+  final GlobalKey _truncKey = GlobalKey();
+
+  /// 折叠高度 / 展开总高度 的比例，首次展开时测量。
+  double? _collapsedFrac;
+
+  /// 展开后的文本总高度，首次展开时测量。
+  double? _fullHeight;
+
+  /// 上一动画帧的 t 值，用于计算本帧高度增量。
+  double _prevT = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // 抖动根治点：高度动画的每一帧都在 transient 阶段（布局/绘制之前）
+    // 用同一个 t 值同步补偿滚动位置。高度变化和滚动修正来自同一帧的
+    // 同一个曲线值，不存在任何相位差，顶部全程钉死。
+    _controller.addListener(_compensateScroll);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   void _toggle() {
-    final context = _anchorKey.currentContext;
-    final box = context?.findRenderObject() as RenderBox?;
-    if (box != null && box.hasSize) {
-      _anchorScreenY = box.localToGlobal(Offset.zero).dy;
-      _initialHeight = box.size.height;
+    if (!_expanded) {
+      // 展开前测量折叠高度（截断文本）与展开总高度，算出折叠比例。
+      final truncBox =
+          _truncKey.currentContext?.findRenderObject() as RenderBox?;
+      final fullBox = _fullKey.currentContext?.findRenderObject() as RenderBox?;
+      if (truncBox != null &&
+          truncBox.hasSize &&
+          fullBox != null &&
+          fullBox.hasSize &&
+          fullBox.size.height > 0) {
+        _fullHeight = fullBox.size.height;
+        _collapsedFrac =
+            (truncBox.size.height / fullBox.size.height).clamp(0.0, 1.0);
+      }
     }
-    _holdEpoch++;
-    final epoch = _holdEpoch;
+    _prevT = _t.value;
     setState(() => _expanded = !_expanded);
-    _holdAnchor(epoch);
+    if (_collapsedFrac == null) {
+      // 测量失败（极小概率），退化为直接切换，不做动画。
+      _controller.value = _expanded ? 1.0 : 0.0;
+      return;
+    }
+    if (_expanded) {
+      _controller.forward();
+    } else {
+      _controller.reverse();
+    }
   }
 
-  /// 平滑锚定：不用逐帧 jumpTo 硬校正（每帧先偏再 snap 会抖），
-  /// 而是在动画第一帧读到最终高度增量后，用与 AnimatedSize 相同的
-  /// 时长/曲线做一次反向 animateTo，两条动画逐帧对消，顶部全程稳定。
-  void _holdAnchor(int epoch) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (epoch != _holdEpoch) return;
-      final context = _anchorKey.currentContext;
-      final textContext = _textKey.currentContext;
-      final anchor = _anchorScreenY;
-      final initialHeight = _initialHeight;
-      if (context == null || textContext == null) return;
-      if (anchor == null || initialHeight == null) return;
-      final scrollable = Scrollable.maybeOf(context);
-      if (scrollable == null) return;
-      final position = scrollable.position;
-      if (!position.hasPixels || !position.hasContentDimensions) return;
-      final finalHeight = textContext.size?.height ?? initialHeight;
-      final totalDelta = finalHeight - initialHeight;
-      if (totalDelta.abs() < 0.5) return;
-      // reverse 列表（axisDirection=up）：内容被顶向上，视口要反向多滚；
-      // 普通列表方向相反。公式对展开/收起都成立（totalDelta 带符号）。
-      final scrollSign =
-          position.axisDirection == AxisDirection.up ? 1.0 : -1.0;
-      final target = (position.pixels + scrollSign * totalDelta).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      );
-      unawaited(
-        position.animateTo(
-          target,
-          duration: FluffyThemes.animationDuration,
-          curve: FluffyThemes.animationCurve,
-        ),
-      );
-      // 动画结束后校验一次，如有残留误差再一次性修正。
-      Future.delayed(
-        FluffyThemes.animationDuration + const Duration(milliseconds: 80),
-        () => _finalCorrect(epoch, anchor),
-      );
-    });
-  }
-
-  void _finalCorrect(int epoch, double anchor) {
-    if (epoch != _holdEpoch) return;
-    final context = _anchorKey.currentContext;
-    if (context == null) return;
-    final box = context.findRenderObject() as RenderBox?;
+  /// 每个动画 tick：按本帧高度增量同步修正滚动位置。
+  ///
+  /// 反转列表（axisDirection=up）里，气泡内容向下生长 delta 像素会让
+  /// 文本顶部在屏幕上向上移动 delta 像素，所以 scroll offset 同步加 delta；
+  /// 普通列表顶部天然不动，无需补偿。delta 带符号，展开/收起通用。
+  void _compensateScroll() {
+    final frac = _collapsedFrac;
+    final fullH = _fullHeight;
+    if (frac == null || fullH == null) return;
     final scrollable = Scrollable.maybeOf(context);
-    if (box == null || !box.hasSize || scrollable == null) return;
+    if (scrollable == null) return;
     final position = scrollable.position;
     if (!position.hasPixels || !position.hasContentDimensions) return;
-    final screenDelta = box.localToGlobal(Offset.zero).dy - anchor;
-    if (screenDelta.abs() <= 0.5) return;
-    final sign = position.axisDirection == AxisDirection.up ? -1.0 : 1.0;
+    final t = _t.value;
+    final delta = fullH * (1 - frac) * (t - _prevT);
+    _prevT = t;
+    if (delta.abs() < 0.01) return;
+    if (position.axisDirection != AxisDirection.up) return;
     position.jumpTo(
-      (position.pixels + sign * screenDelta).clamp(
+      (position.pixels + delta).clamp(
         position.minScrollExtent,
         position.maxScrollExtent,
       ),
     );
   }
 
+  double _heightFactor() {
+    final frac = _collapsedFrac;
+    final t = _t.value;
+    if (frac == null) return t > 0 ? 1.0 : 0.0;
+    return frac + (1 - frac) * t;
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = L10n.of(context);
+    final truncated = Text.rich(
+      widget.span,
+      style: widget.style,
+      maxLines: widget.maxLines,
+      overflow: TextOverflow.ellipsis,
+      selectionColor: widget.textColor.withAlpha(128),
+    );
+    final full = Text.rich(
+      widget.span,
+      style: widget.style,
+      selectionColor: widget.textColor.withAlpha(128),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 锚点挂在文本容器上（顶部对齐 topStart：展开时顶部不动、往下长）。
-        AnimatedSize(
-          key: _anchorKey,
-          duration: FluffyThemes.animationDuration,
-          curve: FluffyThemes.animationCurve,
-          alignment: AlignmentDirectional.topStart,
-          child: Text.rich(
-            key: _textKey,
-            widget.span,
-            style: widget.style,
-            maxLines: _expanded ? null : widget.maxLines,
-            overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
-            selectionColor: widget.textColor.withAlpha(128),
-          ),
+        AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            final t = _t.value;
+            return Stack(
+              alignment: AlignmentDirectional.topStart,
+              children: [
+                // ClipRect + heightFactor 做高度动画：折叠态 factor 为
+                // 折叠比例时，可见内容与截断文本逐行一致，切换无缝。
+                // factor=0 时盒子零高，但子文本仍按完整高度布局（可测量）。
+                ClipRect(
+                  child: Align(
+                    alignment: AlignmentDirectional.topStart,
+                    heightFactor: _heightFactor(),
+                    child: KeyedSubtree(key: _fullKey, child: full),
+                  ),
+                ),
+                // 完全折叠且未在动画时显示带省略号的截断文本。
+                if (!_expanded && t == 0)
+                  KeyedSubtree(key: _truncKey, child: truncated),
+              ],
+            );
+          },
         ),
         Center(
           child: TextButton.icon(
